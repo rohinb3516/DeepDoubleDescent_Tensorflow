@@ -1,5 +1,7 @@
 import tensorflow as tf
+import tensorflow_datasets as tfds
 
+from tensorflow.image import random_crop, resize_with_crop_or_pad
 from tensorflow.keras.losses import SparseCategoricalCrossentropy
 from tensorflow.keras.metrics import Mean, SparseCategoricalAccuracy
 
@@ -9,7 +11,23 @@ class Model_Trainer:
     
     # Please ensure that model_id is unique. It provides the path for all model statistics.
     
-    def __init__(self, model, model_id, lr=5e-4, optimizer=None):
+    def __init__(self, model, model_id, lr=5e-4, optimizer=None, data_augmentation=None):
+        '''
+            Parameters
+            ----------
+            
+            model: tensorflow.keras.Model
+            model_id : string
+                An identifying string used in saving model metrics. 
+            lr : float, tensorflow.keras.optimizers.schedules
+                If using the default optimizer, this is the lr used in the Adam optimizer. 
+                This value is ignored if an optimizer is passed to the trainer.
+            optimizer : tensorflow.keras.optimizers
+                A pre-defined optimizer used in training the neural network
+            data_augmentation : tensorflow.keras.Sequential
+                A tensorflow model used to perform data augmentation during training. 
+                See here: https://www.tensorflow.org/tutorials/images/data_augmentation#use_keras_preprocessing_layers                
+        '''
                 
         self.lr = lr
         self.n_classes = model.n_classes       
@@ -23,9 +41,16 @@ class Model_Trainer:
         else:
             self.init_optimizer()
             
+        if data_augmentation is not None:
+            self.is_data_augmentation = True
+            self.data_augmentation = data_augmentation
+        else:
+            self.is_data_augmentation = False
+            self.data_augmentation = None
+            
         # Used to save the parameters of the model at a given point of time.
         self.checkpoint = tf.train.Checkpoint(model=self.model)
-        self.checkpoint_path = self.model.__class__.__name__ '/' + model_id + "/training_checkpoints"
+        self.checkpoint_path = self.model.__class__.__name__ + '/' + model_id + "/training_checkpoints"
 
 
         self.summary_path = self.model.__class__.__name__ + '/' + model_id + '/summaries/'
@@ -53,6 +78,10 @@ class Model_Trainer:
     # Take a single Training step on the given batch of training data.
     @tf.function
     def train_step(self, images, labels, track_gradient=False):
+        
+        if self.is_data_augmentation:
+            images = self.data_augmentation(images)
+        
         with tf.GradientTape() as gtape:
             predictions = self.model(images, training=True)
             loss = self.loss_function(labels, predictions)
@@ -103,3 +132,65 @@ class Model_Trainer:
         with self.test_summary_writer.as_default():
             tf.summary.scalar('Test Loss', self.test_loss.result(), step=step)
             tf.summary.scalar('Test Accuracy', self.test_accuracy.result(), step=step)
+                        
+            
+def load_data(data_set, batch_size, label_noise):
+    '''
+        Helper Function to Load data in the form of a tensorflow data set, apply label noise, and return the 
+        train data, test data, and the dataset info objet.
+        
+        -augment should be a function to use for image augmentation. 
+        
+        Available datasets can be found here: https://www.tensorflow.org/datasets
+    '''
+    # Load the Data Set
+    (ds_train, ds_test), ds_info = tfds.load(
+        data_set,
+        split=['train', 'test'],
+        shuffle_files=True,
+        as_supervised=True,
+        with_info=True,
+    )
+    
+    n_classes = ds_info.features['label'].num_classes
+    N = ds_info.splits['train'].num_examples
+    
+    def add_label_noise(image, label):
+        # helper function to add label noise and cast data to correct types.
+        image = tf.cast(image, tf.float32)
+        label = tf.cast(label, tf.float32)
+        if label_noise < tf.random.uniform([], 0, 1):
+            return (image, label)  
+        else:
+            return (image, tf.random.uniform(shape=(), minval=0, maxval=n_classes-1, dtype=tf.float32))  
+    
+    # Shuffle the Data set and set training batch size 
+    ds_train = ds_train.map(add_label_noise)
+    ds_train = ds_train.cache()
+    ds_train = ds_train.shuffle(ds_info.splits['train'].num_examples, reshuffle_each_iteration=True)
+    ds_train = ds_train.batch(batch_size)
+
+    # Initilialize the Test Training data set
+    ds_test = ds_test.batch(batch_size)
+    ds_test = ds_test.map(
+        lambda image, label: (tf.cast(image, tf.float32), tf.cast(label, tf.float32))
+    )
+    ds_test = ds_test.cache()
+    
+    return ds_train, ds_test, ds_info    
+
+def augment_data_set(data_set, crop_dim=32, target_height=36, target_width=36):
+    ''' Apply random cropping and random horizontal flip data augmentation as done in Deep Double Descent '''
+    
+    # random flip. Preserve original label
+    rand_flip = lambda image, label: (
+        tf.image.random_flip_left_right(image), label
+    )
+    rand_crop = lambda image, label: (
+        random_crop(resize_with_crop_or_pad(image, target_height, target_width), crop_dim), label
+    )
+    
+    data_set = data_set.interleave(rand_flip, num_parallel_calls=4)
+    data_set = data_set.interleave(rand_crop, num_parallel_calls=4)
+    
+    return data_set
