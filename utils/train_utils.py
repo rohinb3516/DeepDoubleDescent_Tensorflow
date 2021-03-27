@@ -11,7 +11,7 @@ class Model_Trainer:
     
     # Please ensure that model_id is unique. It provides the path for all model statistics.
     
-    def __init__(self, model, model_id, lr=5e-4, optimizer=None, data_augmentation=None):
+    def __init__(self, model, model_id, lr=1e-4, optimizer=None, data_augmentation=None):
         '''
             Parameters
             ----------
@@ -29,8 +29,7 @@ class Model_Trainer:
                 See here: https://www.tensorflow.org/tutorials/images/data_augmentation#use_keras_preprocessing_layers                
         '''
                 
-        self.lr = lr
-        self.n_classes = model.n_classes       
+        self.lr = lr   
         
         self.model = model
         self.init_loss()
@@ -54,15 +53,14 @@ class Model_Trainer:
 
 
         self.summary_path = self.model.__class__.__name__ + '/' + model_id + '/summaries/'
-        self.train_summary_writer = tf.summary.create_file_writer(self.summary_path + 'train')
-        self.test_summary_writer = tf.summary.create_file_writer(self.summary_path + 'test')
+        self.summary_writer = tf.summary.create_file_writer(self.summary_path)
         
         self.gradients = None
         
     
     #initialize loss function and metrics to track over training
     def init_loss(self):
-        self.loss_function = SparseCategoricalCrossentropy(from_logits=True)
+        self.loss_function = SparseCategoricalCrossentropy()
 
         self.train_loss = Mean(name='train_loss')
         self.train_accuracy = SparseCategoricalAccuracy(name='train_accuracy')
@@ -73,23 +71,18 @@ class Model_Trainer:
 
     # Initialize Model optimizer
     def init_optimizer(self):
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=self.lr)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=self.lr, epsilon=1e-8)
+    
     
     # Take a single Training step on the given batch of training data.
-    @tf.function
     def train_step(self, images, labels, track_gradient=False):
-        
-        if self.is_data_augmentation:
-            images = self.data_augmentation(images)
-        
+     
         with tf.GradientTape() as gtape:
             predictions = self.model(images, training=True)
             loss = self.loss_function(labels, predictions)
             
         gradients = gtape.gradient(loss, self.model.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
-        
-        # Track Gradient Information
         
         # Track model Performance
         self.train_loss(loss)
@@ -98,7 +91,7 @@ class Model_Trainer:
         return self.train_loss.result(), self.train_accuracy.result()*100
     
     # Evaluate Model on Test Data
-    def test_step(self, images, labels):
+    def test_step(self, data_set):
         predictions = self.model.predict(images)
         test_loss = self.loss_function(labels, predictions)
         
@@ -121,26 +114,22 @@ class Model_Trainer:
         save_path = self.checkpoint.save(self.checkpoint_path)
         return save_path
 
-    def log_metrics(self):
+    def log_metrics(self, ):
         # Log metrics using tensorflow summary writer. Can Then visualize using TensorBoard
         step = self.checkpoint.save_counter
         
-        with self.train_summary_writer.as_default():
+        with self.summary_writer.as_default():
             tf.summary.scalar('Train Loss', self.train_loss.result(), step=step)
             tf.summary.scalar('Train Accuracy', self.train_accuracy.result(), step=step)
-
-        with self.test_summary_writer.as_default():
             tf.summary.scalar('Test Loss', self.test_loss.result(), step=step)
             tf.summary.scalar('Test Accuracy', self.test_accuracy.result(), step=step)
                         
             
-def load_data(data_set, batch_size, label_noise):
+def load_data(data_set, batch_size, label_noise, augment_data=True):
     '''
         Helper Function to Load data in the form of a tensorflow data set, apply label noise, and return the 
         train data, test data, and the dataset info objet.
-        
-        -augment should be a function to use for image augmentation. 
-        
+                
         Available datasets can be found here: https://www.tensorflow.org/datasets
     '''
     # Load the Data Set
@@ -155,6 +144,9 @@ def load_data(data_set, batch_size, label_noise):
     n_classes = ds_info.features['label'].num_classes
     N = ds_info.splits['train'].num_examples
     
+    if augment_data:
+        ds_train = augment_data_set(ds_train)
+    
     def add_label_noise(image, label):
         # helper function to add label noise and cast data to correct types.
         image = tf.cast(image, tf.float32)
@@ -167,9 +159,8 @@ def load_data(data_set, batch_size, label_noise):
     # Shuffle the Data set and set training batch size 
     ds_train = ds_train.map(add_label_noise)
     ds_train = ds_train.cache()
-    ds_train = ds_train.shuffle(ds_info.splits['train'].num_examples, reshuffle_each_iteration=True)
     ds_train = ds_train.batch(batch_size)
-
+    
     # Initilialize the Test Training data set
     ds_test = ds_test.batch(batch_size)
     ds_test = ds_test.map(
@@ -179,18 +170,26 @@ def load_data(data_set, batch_size, label_noise):
     
     return ds_train, ds_test, ds_info    
 
+
 def augment_data_set(data_set, crop_dim=32, target_height=36, target_width=36):
     ''' Apply random cropping and random horizontal flip data augmentation as done in Deep Double Descent '''
-    
+   
     # random flip. Preserve original label
     rand_flip = lambda image, label: (
         tf.image.random_flip_left_right(image), label
     )
-    rand_crop = lambda image, label: (
-        random_crop(resize_with_crop_or_pad(image, target_height, target_width), crop_dim), label
-    )
     
-    data_set = data_set.interleave(rand_flip, num_parallel_calls=4)
-    data_set = data_set.interleave(rand_crop, num_parallel_calls=4)
+    # Random Crop. Preserve original label
+    def rand_crop(image, label):
+        offset_height = tf.random.uniform([], 0, 3, dtype=tf.int32)
+        offset_width = tf.random.uniform([], 0, 3, dtype=tf.int32)
+        image = tf.image.resize_with_crop_or_pad(image, target_height, target_width)
+        return (tf.image.crop_to_bounding_box(image, offset_height, offset_width, crop_dim, crop_dim), label)
     
-    return data_set
+    data_set_flip = data_set.map(rand_flip)
+    data_set_drop = data_set.map(rand_crop)
+    
+    return {
+        'flip': data_set_flip,
+        'crop': data_set_drop
+    }

@@ -1,15 +1,15 @@
 import tensorflow as tf
 
 from tensorflow.keras.layers import (
-    Dense, Flatten, Conv2D, MaxPool2D, AveragePooling2D, Softmax, BatchNormalization
+    Dense, Flatten, Conv2D, MaxPool2D, AveragePooling2D, BatchNormalization
 )
 from tensorflow.keras import Model, Sequential
 
-def make_resnet18(input_shape, k=64, num_classes=10):
+def make_resnet18_UniformHe(input_shape, k=64, num_classes=10):
     ''' Returns a ResNet18 with width parameter k.'''
     
     # Model_id to identify model set up when using tensorflow checkpoints. 
-    model_id = f'ResNet18_width_scale_{k}'
+    model_id = f'ResNet18_width_scale_{k}_UniformHe_init'
     
     residual_block_params = [
         {'n_filters': k, 'block_depth': 2, 'stride': 1},
@@ -21,11 +21,11 @@ def make_resnet18(input_shape, k=64, num_classes=10):
  
 
 class ResNet(Model):
-    def __init__(self, input_shape, residual_block_params, n_classes=10, init_channels=64):
+    def __init__(self, input_shape, residual_block_params, n_classes=10, init_channels=64, layer_initializer=None):
         '''
             Parameters
             ----------
-                input_shape - int
+                input_shape - list
                     Input dimensions of image data
                 residual_block_params - dict
                     List of dict specifying # filters, # residual blocks, and stride for each residual block in the network.  
@@ -35,17 +35,17 @@ class ResNet(Model):
                     Output dimension of the final softmax layer.
                 filter_n_0 - int
                     Initial number of filters in the network prior to the Residual block layers. 
-                    
-            Note: This implimentation varies slightly from that of Deep double descent and follows the architecture of 
-                  Deep Residual Learning for Image Recognition, 2015 (https://arxiv.org/pdf/1512.03385.pdf)
         '''
         
         super(ResNet, self).__init__()     
         
         self.n_classes = n_classes
+        self._layer_init = layer_initializer if layer_initializer is not None else 'he_normal'
         
-        self.conv_1 = Conv2D(filters=init_channels, kernel_size=(3, 3), strides=1, padding="same")
-        self.batch_norm_1 = BatchNormalization()
+        self.conv_1 = Conv2D(
+            filters=init_channels, kernel_size=(3, 3), strides=1, padding="same", input_shape=input_shape, kernel_initializer=self._layer_init, use_bias=False
+        )
+        self.batch_norm_1 = BatchNormalization(momentum=0.9, epsilon=1e-5)
         self.residual_blocks = []
       
         # Initialize the residual block layers using the parameter dictionaries.
@@ -56,21 +56,21 @@ class ResNet(Model):
 
         self.avgpool = AveragePooling2D(pool_size=4)
         self.flatten = Flatten()
-        self.softmax = Dense(units=self.n_classes, activation='softmax')
+        self.softmax = Dense(units=n_classes, activation='softmax')
         
     def _make_residual_block_layer(self, n_filters, block_depth, stride=1):
         # Define a sequential network which is composed of sequential residual blocks with the same # of filters 
         
         res_block = tf.keras.Sequential()
-        res_block.add(ResidualBlock(n_filters, stride=stride))
+        res_block.add(ResidualBlock(n_filters, stride=stride, layer_initializer=self._layer_init))
 
-        for _ in range(block_depth):
-            res_block.add(ResidualBlock(n_filters, stride=1))
+        for _ in range(block_depth-1):
+            res_block.add(ResidualBlock(n_filters, stride=1, layer_initializer=self._layer_init))
 
         return res_block
                 
         
-    def call(self, inputs, training=None): 
+    def call(self, inputs, training=None, **kwargs): 
         # training is used for layers which utilize Batch Normalization.
         
         x = self.conv_1(inputs)
@@ -93,7 +93,7 @@ class ResidualBlock(tf.keras.layers.Layer):
         Impliments A single Residual block component of a ResNet.
     '''
     
-    def __init__(self, n_filters, stride=1):
+    def __init__(self, n_filters, layer_initializer, stride=1):
         """
             Parameters
             ----------
@@ -105,29 +105,32 @@ class ResidualBlock(tf.keras.layers.Layer):
 
         super(ResidualBlock, self).__init__()
         
-        self.conv_1 = Conv2D(filters=n_filters, kernel_size=(3, 3), strides=stride, padding="same")
-        self.batch_norm_1 = BatchNormalization()
-                
-        self.conv_2 = Conv2D(filters=n_filters, kernel_size=(3, 3), strides=1, padding="same")
-        self.batch_norm_2 = BatchNormalization()
+        self._layer_init = layer_initializer if layer_initializer is not None else 'he_normal'
         
-        # This is done for layers which reduce the filter dimensions. 
-        # Use 1x1 convolutions when downsampling, and identity map otherwise.
+        self.conv_1 = Conv2D(filters=n_filters, kernel_size=(3, 3), strides=stride, padding="same", kernel_initializer=self._layer_init, use_bias=False)
+        self.batch_norm_1 = BatchNormalization(momentum=0.9, epsilon=1e-5)
+                
+        self.conv_2 = Conv2D(filters=n_filters, kernel_size=(3, 3), strides=1, padding="same", kernel_initializer=self._layer_init, use_bias=False)
+        self.batch_norm_2 = BatchNormalization(momentum=0.9, epsilon=1e-5)
+        
+        # This is done on layers which reduce the image dimension. 
         if stride != 1:
             self.downsample = tf.keras.Sequential()
-            self.downsample.add(Conv2D(filters=n_filters, kernel_size=(1, 1), strides=stride))
-            self.downsample.add(BatchNormalization())
+            self.downsample.add(Conv2D(filters=n_filters, kernel_size=(1, 1), strides=stride, kernel_initializer=self._layer_init, use_bias=False))
+            self.downsample.add(BatchNormalization(momentum=0.9, epsilon=1e-5))
         else:
             self.downsample = lambda x: x
 
     def call(self, inputs, training=None, **kwargs):
         residual = self.downsample(inputs)
+        
         x = self.conv_1(inputs)
         x = self.batch_norm_1(x, training=training)
         x = tf.nn.relu(x)
         
         x = self.conv_2(x)
-        x = self.batch_norm_2(x, training=training)   
+        x = self.batch_norm_2(x, training=training)
+        x = tf.nn.relu(x)
         
-        output = tf.nn.relu(tf.keras.layers.add([residual, x]))
+        output = tf.keras.layers.add([residual, x])
         return output
