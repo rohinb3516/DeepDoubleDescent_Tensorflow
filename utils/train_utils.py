@@ -5,11 +5,58 @@ from tensorflow.image import random_crop, resize_with_crop_or_pad
 from tensorflow.keras.losses import SparseCategoricalCrossentropy
 from tensorflow.keras.metrics import Mean, SparseCategoricalAccuracy
 
+import time
+
+class timer(tf.keras.callbacks.Callback):
+    '''
+        Simle call back class to track total training time.
+    '''
+    def __init__(self):
+        super().__init__()
+        
+        self.start_time = time.perf_counter()
+    
+    def on_epoch_end(self, epoch, logs=None):
+        ''' Help keep track of total training time needed for various models. '''   
+        if epoch % 25 == 0:
+            end_time = time.perf_counter()
+            run_time = end_time - self.start_time
+            hrs, mnts, secs = int(run_time // 60 // 60), int(run_time // 60 % 60), int(run_time % 60)
+
+            template = 'Epoch: {:04}, Total Run Time: {:02}:{:02}:{:02}'
+            template += ' - Loss: {:.4e}, Accuracy: {:.3f}, Test Loss: {:.4e}, Test Accuracy: {:.3f}'
+
+            train_loss, train_accuracy = logs['loss'], logs['accuracy']
+            test_loss, test_accuracy = logs['val_loss'], logs['val_accuracy']
+            print(template.format(epoch, hrs, mnts, secs, train_loss, train_accuracy, test_loss, test_accuracy))
+        
+class inverse_squareroot_lr:
+    ''' 
+        This is the learning rate used with SGD in the paper (Inverse square root decay). 
+        Learning Rate starts at 0.1 and then drops every 512 batches.
+    '''
+    def __init__(self, n_steps=512, init_lr=0.1):
+        self.n = n_steps
+        self.gradient_steps = 0
+        self.init_lr = init_lr
+        
+    def __call__(self):
+        lr = self.init_lr / tf.math.sqrt(1.0 + tf.math.floor(self.gradient_steps / self.n))
+        self.gradient_steps += 1
+        return lr
+    
+
+
 class Model_Trainer:
     # Training Wrapper For Tensorflow Models. Allows a predifined model to be easily trained
     # while also tracking parameter and gradient information.
     
     # Please ensure that model_id is unique. It provides the path for all model statistics.
+    
+    """
+        NO longer in use, model.fit provides significant training speed up. the features utilized below 
+        will be replaced with tensorflow callbacks.
+    """
     
     def __init__(self, model, model_id, lr=1e-4, optimizer=None, data_augmentation=None):
         '''
@@ -132,6 +179,7 @@ def load_data(data_set, batch_size, label_noise, augment_data=True):
                 
         Available datasets can be found here: https://www.tensorflow.org/datasets
     '''
+    
     # Load the Data Set
     (ds_train, ds_test), ds_info = tfds.load(
         data_set,
@@ -154,19 +202,15 @@ def load_data(data_set, batch_size, label_noise, augment_data=True):
         if label_noise < tf.random.uniform([], 0, 1):
             return (image, label)  
         else:
-            return (image, tf.random.uniform(shape=(), minval=0, maxval=n_classes-1, dtype=tf.float32))  
+            return (image, tf.random.uniform(shape=(), minval=0, maxval=n_classes, dtype=tf.float32))  
     
     # Shuffle the Data set and set training batch size 
-    ds_train = ds_train.map(add_label_noise)
-    ds_train = ds_train.cache()
-    ds_train = ds_train.batch(batch_size)
+    ds_train = ds_train.map(add_label_noise).batch(batch_size)
     
     # Initilialize the Test Training data set
-    ds_test = ds_test.batch(batch_size)
-    ds_test = ds_test.map(
+    ds_test = ds_test.batch(batch_size).map(
         lambda image, label: (tf.cast(image, tf.float32), tf.cast(label, tf.float32))
-    )
-    ds_test = ds_test.cache()
+    ).cache()
     
     return ds_train, ds_test, ds_info    
 

@@ -48,7 +48,8 @@ def make_convNet(input_shape, depth, n_classes=10, init_channels=64, layer_initi
         conv_net.add(BatchNormalization())
         conv_net.add(ReLU())
         
-        if 0 < i:
+        # This delays max pooling until the final 4 layers. After 4 layers of 2x2 (stride 2x2) max pooling the image dimension goes from 32 x 32 to 4x4. 
+        if depth-5 < i:
             conv_net.add(MaxPool2D(pool_size=(2, 2), strides=(2, 2)))
 
     conv_net.add(MaxPool2D(pool_size=(4, 4), strides=(4, 4)))

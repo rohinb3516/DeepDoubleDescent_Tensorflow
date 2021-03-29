@@ -9,7 +9,7 @@ def make_resnet18_UniformHe(input_shape, k=64, num_classes=10):
     ''' Returns a ResNet18 with width parameter k.'''
     
     # Model_id to identify model set up when using tensorflow checkpoints. 
-    model_id = f'ResNet18_width_scale_{k}_UniformHe_init'
+    model_id = f'ResNet18_width_{k}_UniformHe_init'
     
     residual_block_params = [
         {'n_filters': k, 'block_depth': 2, 'stride': 1},
