@@ -16,9 +16,8 @@ def train_conv_nets(
     convnet_depth,
     convnet_widths,
     label_noise_as_int=10,
-    scaled_loss_alpha=None,
     n_batch_steps=500_000,
-    optimizer=None
+    optimizer=None,
     save=True
 ):    
     '''
@@ -44,7 +43,6 @@ def train_conv_nets(
             whether to save the data and trained model weights.
     '''
     
-    alpha=scaled_loss_alpha
     label_noise = label_noise_as_int / 100
     
     # load the relevent dataset
@@ -68,21 +66,21 @@ def train_conv_nets(
         conv_net, model_id = make_convNet(image_shape, depth=convnet_depth, init_channels=width)
 
         conv_net.compile(
-            optimizer=tf.keras.optimizers.SGD(learning_rate=inverse_squareroot_lr()) if optimizer is None else optimizer,
-            loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+            optimizer='sparse_categorical_crossentropy'
+            loss=scaled_loss ,
             metrics=['accuracy']
         )
 
         model_timer = timer()
         
-        print(f'STARTING TRAINING: {model_id}, Alpha: {alpha}')
+        print(f'STARTING TRAINING: {model_id}')
         history = conv_net.fit(
             x=x_train, y=y_train, 
             validation_data=(x_test, y_test),
             epochs=n_epochs,
             batch_size=batch_size,
             verbose=0, 
-            callbacks = [model_timer]
+            callbacks = [model_timer, Track_Weight_Change_onEpoch()]
         )
         print(f'FINISHED TRAINING: {model_id}')    
 
@@ -163,9 +161,10 @@ def augment_data_set(data_set, crop_dim=32, target_height=36, target_width=36):
         'crop': data_set_drop
     }
 
+
 class timer(tf.keras.callbacks.Callback):
     '''
-        Simle call back class to track total training time.
+        Simple call back class to track total training time.
     '''
     def __init__(self):
         super().__init__()
@@ -200,15 +199,13 @@ class inverse_squareroot_lr:
         lr = self.init_lr / tf.math.sqrt(1.0 + tf.math.floor(self.gradient_steps / self.n))
         self.gradient_steps += 1
         return lr
-   
-
-
+    
 
 class Model_Trainer:
     # Training Wrapper For Tensorflow Models. Allows a predifined model to be easily trained
-    # while also tracking parameter and gradient information in the model history
+    # while also tracking parameter and gradient information.
     
-    # Please ensure that model_id is unique. It provides the path for saving model metrics.
+    # Please ensure that model_id is unique. It provides the path for all model statistics.
     
     """
         NO longer in use, model.fit provides significant training speed up. the features utilized below 
