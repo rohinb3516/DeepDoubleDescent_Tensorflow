@@ -1,0 +1,2 @@
+model_checkpoint_path: "conv_net_depth_3_width_256"
+all_model_checkpoint_paths: "conv_net_depth_3_width_256"

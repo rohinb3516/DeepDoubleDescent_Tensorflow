@@ -6,6 +6,162 @@ from tensorflow.keras.losses import SparseCategoricalCrossentropy
 from tensorflow.keras.metrics import Mean, SparseCategoricalAccuracy
 
 import time
+import numpy as np
+import pickle as pkl
+
+from models.conv_nets import make_convNet
+
+def train_conv_nets(
+    data_set,
+    convnet_depth,
+    convnet_widths,
+    label_noise_as_int=10,
+    scaled_loss_alpha=None,
+    n_batch_steps=500_000,
+    optimizer=None
+    save=True
+):    
+    '''
+        Train and save the results of Conv nets of a given range of model widths.
+        
+        Note: 500_000 is approximately 1250 epochs. 1_600_000 batchs is approximately 4K epochs. 
+        
+        Parameters
+        ----------
+        
+        data_set: str
+            Which data set to train on. See the load data funciton. 
+        convnet_depth: int
+        convnet_widths: list[int]
+            List of model widths to train.
+        label_noise_as_int: int
+            Percentage of label noise to add to the training data.
+        scaled_loss_alpha: float
+            The alplha value used to scale the cross entropy loss used during training.
+        n_batch_steps: int
+            number of gradient descent steps to take.
+        save: bool
+            whether to save the data and trained model weights.
+    '''
+    
+    alpha=scaled_loss_alpha
+    label_noise = label_noise_as_int / 100
+    
+    # load the relevent dataset
+    (x_train, y_train), (x_test, y_test), image_shape = load_data(data_set, label_noise, augment_data=False)
+
+    batch_size = 128
+    # total number desirec SGD steps / number batches per epoch = n_epochs
+    n_epochs = n_batch_steps // (x_train.shape[0] // batch_size)
+    
+    
+    # store results for later graphing and analysis.
+    model_histories = {}
+    metrics = {}
+
+    # Paths to save model weights and 
+    model_weights_paths = f'trained_model_weights_{data_set}/conv_nets_depth_{convnet_depth}_{label_noise_as_int}pct_noise/'
+    data_save_path = f'experimental_results_{data_set}/conv_nets_'
+
+    for width in convnet_widths:
+        # Depth 5 Conv Net using default Kaiming Uniform Initialization.
+        conv_net, model_id = make_convNet(image_shape, depth=convnet_depth, init_channels=width)
+
+        conv_net.compile(
+            optimizer=tf.keras.optimizers.SGD(learning_rate=inverse_squareroot_lr()) if optimizer is None else optimizer,
+            loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+            metrics=['accuracy']
+        )
+
+        model_timer = timer()
+        
+        print(f'STARTING TRAINING: {model_id}, Alpha: {alpha}')
+        history = conv_net.fit(
+            x=x_train, y=y_train, 
+            validation_data=(x_test, y_test),
+            epochs=n_epochs,
+            batch_size=batch_size,
+            verbose=0, 
+            callbacks = [model_timer]
+        )
+        print(f'FINISHED TRAINING: {model_id}')    
+
+        # add results to dictionary and store the resulting model weights.
+        metrics[model_id] = history.history
+        
+        # clear GPU of prior model to decrease training times.
+        tf.keras.backend.clear_session()
+        
+        # Save results to the data file
+        if save:
+            pkl.dump(metrics, open(data_save_path + f'depth_{convnet_depth}_{label_noise_as_int}pct_noise.pkl', 'wb'))
+            history.model.save_weights(model_weights_paths+model_id)
+            
+    return metrics
+
+
+
+def load_data(data_set, label_noise, augment_data=False):
+    '''
+        Helper Function to Load data in the form of a tensorflow data set, apply label noise, and return the 
+        train data and test data.
+        
+        Parameters
+        ----------
+        data_set - str, name of data set to load from tf.keras.datasets
+        label_noise - float, percentage of training data to add noise to
+        augment_data - boolean, whether or not to use random cropping and horizontal flipping to augment training data
+    '''
+    
+    datasets = ['cifar10', 'cifar100', 'mnist']
+    
+    # load Cifar 10, Cifar 100, or mnis data set
+    if data_set == 'cifar10':
+        get_data = tf.keras.datasets.cifar10
+    elif data_set == 'cifar100':
+        get_data = tf.keras.datasets.cifar100
+    elif data_set == 'mnist':
+        get_data = tf.keras.datasets.mnist
+    else:
+        raise Exception(f"Please enter a data set from the following options: {datasets}")
+    
+    # load the data.
+    (x_train, y_train), (x_test, y_test) = get_data.load_data()
+    image_shape = x_train[0].shape
+    
+    # apply label noise to the data set
+    if 0 < label_noise:
+        random_idx = np.random.choice(x_train.shape[0], int(label_noise*x_train.shape[0]))
+        rand_labels = np.random.randint(low=y_train.min(), high=y_train.max(), size=len(random_idx))
+        y_train[random_idx] = np.expand_dims(rand_labels, axis=1)
+    
+    #TODO: Add data augmentation.
+    
+    return (x_train, y_train), (x_test, y_test), image_shape
+
+
+def augment_data_set(data_set, crop_dim=32, target_height=36, target_width=36):
+    ''' Apply random cropping and random horizontal flip data augmentation as done in Deep Double Descent '''
+   
+    # random flip. Preserve original label
+    rand_flip = lambda image, label: (
+        tf.image.random_flip_left_right(image), label
+    )
+    
+    # Random Crop. Preserve original label
+    def rand_crop(image, label):
+        offset_height = tf.random.uniform([], 0, 3, dtype=tf.int32)
+        offset_width = tf.random.uniform([], 0, 3, dtype=tf.int32)
+        image = tf.image.resize_with_crop_or_pad(image, target_height, target_width)
+        return (tf.image.crop_to_bounding_box(image, offset_height, offset_width, crop_dim, crop_dim), label)
+    
+    data_set_flip = data_set.map(rand_flip)
+    data_set_drop = data_set.map(rand_crop)
+    
+    return {
+        'flip': data_set_flip,
+        'crop': data_set_drop
+    }
 
 class timer(tf.keras.callbacks.Callback):
     '''
@@ -44,14 +200,15 @@ class inverse_squareroot_lr:
         lr = self.init_lr / tf.math.sqrt(1.0 + tf.math.floor(self.gradient_steps / self.n))
         self.gradient_steps += 1
         return lr
-    
+   
+
 
 
 class Model_Trainer:
     # Training Wrapper For Tensorflow Models. Allows a predifined model to be easily trained
-    # while also tracking parameter and gradient information.
+    # while also tracking parameter and gradient information in the model history
     
-    # Please ensure that model_id is unique. It provides the path for all model statistics.
+    # Please ensure that model_id is unique. It provides the path for saving model metrics.
     
     """
         NO longer in use, model.fit provides significant training speed up. the features utilized below 
@@ -170,70 +327,3 @@ class Model_Trainer:
             tf.summary.scalar('Train Accuracy', self.train_accuracy.result(), step=step)
             tf.summary.scalar('Test Loss', self.test_loss.result(), step=step)
             tf.summary.scalar('Test Accuracy', self.test_accuracy.result(), step=step)
-                        
-            
-def load_data(data_set, batch_size, label_noise, augment_data=True):
-    '''
-        Helper Function to Load data in the form of a tensorflow data set, apply label noise, and return the 
-        train data, test data, and the dataset info objet.
-                
-        Available datasets can be found here: https://www.tensorflow.org/datasets
-    '''
-    
-    # Load the Data Set
-    (ds_train, ds_test), ds_info = tfds.load(
-        data_set,
-        split=['train', 'test'],
-        shuffle_files=True,
-        as_supervised=True,
-        with_info=True,
-    )
-    
-    n_classes = ds_info.features['label'].num_classes
-    N = ds_info.splits['train'].num_examples
-    
-    if augment_data:
-        ds_train = augment_data_set(ds_train)
-    
-    def add_label_noise(image, label):
-        # helper function to add label noise and cast data to correct types.
-        image = tf.cast(image, tf.float32)
-        label = tf.cast(label, tf.float32)
-        if label_noise < tf.random.uniform([], 0, 1):
-            return (image, label)  
-        else:
-            return (image, tf.random.uniform(shape=(), minval=0, maxval=n_classes, dtype=tf.float32))  
-    
-    # Shuffle the Data set and set training batch size 
-    ds_train = ds_train.map(add_label_noise).batch(batch_size)
-    
-    # Initilialize the Test Training data set
-    ds_test = ds_test.batch(batch_size).map(
-        lambda image, label: (tf.cast(image, tf.float32), tf.cast(label, tf.float32))
-    ).cache()
-    
-    return ds_train, ds_test, ds_info    
-
-
-def augment_data_set(data_set, crop_dim=32, target_height=36, target_width=36):
-    ''' Apply random cropping and random horizontal flip data augmentation as done in Deep Double Descent '''
-   
-    # random flip. Preserve original label
-    rand_flip = lambda image, label: (
-        tf.image.random_flip_left_right(image), label
-    )
-    
-    # Random Crop. Preserve original label
-    def rand_crop(image, label):
-        offset_height = tf.random.uniform([], 0, 3, dtype=tf.int32)
-        offset_width = tf.random.uniform([], 0, 3, dtype=tf.int32)
-        image = tf.image.resize_with_crop_or_pad(image, target_height, target_width)
-        return (tf.image.crop_to_bounding_box(image, offset_height, offset_width, crop_dim, crop_dim), label)
-    
-    data_set_flip = data_set.map(rand_flip)
-    data_set_drop = data_set.map(rand_crop)
-    
-    return {
-        'flip': data_set_flip,
-        'crop': data_set_drop
-    }
