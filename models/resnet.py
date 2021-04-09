@@ -130,7 +130,6 @@ class ResidualBlock(tf.keras.layers.Layer):
         
         x = self.conv_2(x)
         x = self.batch_norm_2(x, training=training)
-        x = tf.nn.relu(x)
         
-        output = tf.keras.layers.add([residual, x])
+        output = tf.nn.relu(tf.keras.layers.add([residual, x]))
         return output
