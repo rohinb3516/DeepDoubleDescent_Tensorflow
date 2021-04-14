@@ -23,6 +23,7 @@ def train_conv_nets(
     optimizer=None,
     save=True,
     data_save_path_prefix="",
+    data_save_path_suffix=""
 ):
     """
     Train and save the results of Conv nets of a given range of model widths.
@@ -131,6 +132,7 @@ def train_resnet18(
     optimizer=None,
     save=True,
     data_save_path_prefix="",
+    data_save_path_suffix=""
 ):
     """
     Train and save the results of ResNets nets of a given range of model widths.
