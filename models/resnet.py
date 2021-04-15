@@ -142,7 +142,7 @@ class ResidualBlock(tf.keras.layers.Layer):
             layer_initializer if layer_initializer is not None else "he_normal"
         )
 
-        self.batch_norm_1 = BatchNormalization(momentum=0.9, epsilon=1e-5)
+        self.batch_norm_1 = BatchNormalization(momentum=0.9, epsilon=1e-5, renorm=True)
         self.conv_1 = Conv2D(
             filters=n_filters,
             kernel_size=(3, 3),
@@ -152,7 +152,7 @@ class ResidualBlock(tf.keras.layers.Layer):
             use_bias=False,
         )
 
-        self.batch_norm_2 = BatchNormalization(momentum=0.9, epsilon=1e-5)
+        self.batch_norm_2 = BatchNormalization(momentum=0.9, epsilon=1e-5, renorm=True)
         self.conv_2 = Conv2D(
             filters=n_filters,
             kernel_size=(3, 3),
@@ -174,7 +174,6 @@ class ResidualBlock(tf.keras.layers.Layer):
                     use_bias=False,
                 )
             )
-            self.downsample.add(BatchNormalization(momentum=0.9, epsilon=1e-5))
         else:
             self.downsample = lambda x: x
 
