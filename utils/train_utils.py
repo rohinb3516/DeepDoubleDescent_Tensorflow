@@ -91,7 +91,7 @@ def train_conv_nets(
             optimizer=tf.keras.optimizers.SGD(learning_rate=inverse_squareroot_lr())
             if optimizer is None
             else optimizer,
-            loss=tf.keras.losses.SparseCategoricalCrossentropy()
+            loss=tf.keras.losses.SparseCategoricalCrossentropy(),
             metrics=["accuracy"],
         )
 
@@ -105,7 +105,7 @@ def train_conv_nets(
             epochs=n_epochs,
             batch_size=batch_size,
             verbose=0,
-            callbacks=[model_timer, Track_Weight_Change_onEpoch()],
+            callbacks=[model_timer],
         )
         print(f"FINISHED TRAINING: {model_id}")
 
@@ -202,15 +202,14 @@ def train_resnet18(
             optimizer=tf.keras.optimizers.Adam(1e-4)
             if optimizer is None
             else optimizer,
-            loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+            loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
             metrics=["accuracy"],
         )
         resnet(tf.keras.Input(shape=list(image_shape), batch_size=batch_size))
 
         model_timer = timer()
-        parameter_tracker = Track_Weight_Change_onEpoch()
 
-        print(f"STARTING TRAINING: {model_id}, Alpha: {alpha}")
+        print(f"STARTING TRAINING: {model_id}, Label Noise: {label_noise}")
         history = resnet.fit(
             x=x_train,
             y=y_train,
@@ -218,7 +217,7 @@ def train_resnet18(
             epochs=n_epochs,
             batch_size=batch_size,
             verbose=0,
-            callbacks=[model_timer, parameter_tracker],
+            callbacks=[model_timer],
         )
         print(f"FINISHED TRAINING: {model_id}")
 
