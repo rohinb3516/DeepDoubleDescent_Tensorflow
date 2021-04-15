@@ -79,7 +79,8 @@ def train_conv_nets(
         data_save_path = data_save_path_prefix + "/" + data_save_path
 
     if data_save_path_suffix:
-        data_save_path = data_save_path + data_save_path_suffix
+        assert data_save_path[-4:] == ".pkl"
+        data_save_path = data_save_path[:-4] + data_save_path_suffix + ".pkl"
 
     for width in convnet_widths:
         # Depth 5 Conv Net using default Kaiming Uniform Initialization.
@@ -189,7 +190,8 @@ def train_resnet18(
     if data_save_path_prefix:
         data_save_path = data_save_path_prefix + "/" + data_save_path
     if data_save_path_suffix:
-        data_save_path = data_save_path + data_save_path_suffix
+        assert data_save_path[-4:] == ".pkl"
+        data_save_path = data_save_path[:-4] + data_save_path_suffix + ".pkl"
 
     for width in resnet_widths:
         # Resnet18 with Kaiming Uniform Initialization.
