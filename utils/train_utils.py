@@ -1,5 +1,4 @@
 import tensorflow as tf
-import tensorflow_datasets as tfds
 
 from tensorflow.image import random_crop, resize_with_crop_or_pad
 from tensorflow.keras.losses import SparseCategoricalCrossentropy
@@ -18,7 +17,6 @@ def train_conv_nets(
     convnet_depth,
     convnet_widths,
     label_noise_as_int=10,
-    scaled_loss_alpha=None,
     n_batch_steps=500_000,
     optimizer=None,
     save=True,
@@ -98,7 +96,7 @@ def train_conv_nets(
 
         model_timer = timer()
 
-        print(f"STARTING TRAINING: {model_id}, Alpha: {alpha}")
+        print(f"STARTING TRAINING: {model_id}")
         history = conv_net.fit(
             x=x_train,
             y=y_train,
@@ -146,8 +144,6 @@ def train_resnet18(
         List of model widths to train.
     label_noise_as_int: int
         Percentage of label noise to add to the training data.
-    scaled_loss_alpha: float
-        The alplha value used to scale the cross entropy loss used during training.
     n_epochs: int
         number of epochs to train, if not specified, will calculate with n_batch_steps
     n_batch_steps: int
@@ -288,6 +284,23 @@ def load_data(data_set, label_noise, augment_data=False):
 
     return (x_train, y_train), (x_test, y_test), list(image_shape)
 
+class inverse_squareroot_lr:
+    """
+    This is the learning rate used with SGD in the paper (Inverse square root decay).
+    Learning Rate starts at 0.1 and then drops every 512 batches.
+    """
+
+    def __init__(self, n_steps=512, init_lr=0.1):
+        self.n = n_steps
+        self.gradient_steps = 0
+        self.init_lr = init_lr
+
+    def __call__(self):
+        lr = self.init_lr / tf.math.sqrt(
+            1.0 + tf.math.floor(self.gradient_steps / self.n)
+        )
+        self.gradient_steps += 1
+        return lr
 
 def augment_data_set(data_set, crop_dim=32, target_height=36, target_width=36):
     """ Apply random cropping and random horizontal flip data augmentation as done in Deep Double Descent """
