@@ -24,7 +24,7 @@ from models.conv_nets import make_convNet
 from utils.train_utils import load_data, timer, inverse_squareroot_lr
 
 
-def train_convnet_subsample(label_noise_as_int, n_sample_list, width):
+def train_convnet_subsample(label_noise_as_int, n_sample_list, width, load_saved_metrics=True):
     """
         Close replication of the function utils.train_utils.train_convnets but is simplified 
         for the use of testing the data wise double descent.
@@ -39,6 +39,8 @@ def train_convnet_subsample(label_noise_as_int, n_sample_list, width):
             A list of sample sizes (must be below 50_000) to train the ConvNets on.
         width: int
             The width of the network to train across the different dataset sizes.
+        load_saved_metrics: bool
+            pick up from cut of point of prior experiment. Loads file from the data matching the current experiment name.
     """
 
     label_noise = label_noise_as_int / 100
@@ -55,8 +57,30 @@ def train_convnet_subsample(label_noise_as_int, n_sample_list, width):
     # Path to save results from training with different sample sizes
     data_save_path = f"subsample_results/width_{width}.pkl"
     
+     # load data from prior runs of related experiment.
+    if load_saved_metrics:
+        try:
+            with open(data_save_path, 'rb') as f:
+                metrics = pkl.load(f)
+        except Exception as e:
+            print('Could not find saved metrics.pkl file, exiting')
+            raise e
+
+        loaded_sample_sizes = [int(i.split('_')[-1]) for i in metrics.keys()]
+        assert n_sample_list[:len(loaded_sample_sizes)] == loaded_sample_sizes
+        print('loaded results for width %s from existing file at %s' %(', '.join([str(i) for i in loaded_sample_sizes]), data_save_path))
+
+        assert data_save_path[-4:] == ".pkl"
+        data_backup_path = data_save_path[:-4] + 'backup_w%d_' %loaded_sample_sizes[-1] + time.strftime("%D_%H%M%S").replace('/', '') + ".pkl"
+        print('saving existing result.pkl to backup at %s' %data_backup_path)
+        pkl.dump(metrics, open(data_backup_path, "wb"))
+    
     # train the model for each sample size specified.
     for sample_size in n_sample_list:
+        if load_saved_metrics and sample_size in loaded_sample_sizes:
+            print(f'Sample Size {sample_size} results already loaded from .pkl file, training skipped')
+            continue
+            
         # Depth 5 Conv Net using default Kaiming Uniform Initialization.
         conv_net, model_id = make_convNet(
             image_shape, depth=5, init_channels=width, n_classes=10
@@ -64,7 +88,7 @@ def train_convnet_subsample(label_noise_as_int, n_sample_list, width):
 
         conv_net.compile(
             optimizer=tf.keras.optimizers.SGD(learning_rate=inverse_squareroot_lr()),
-            loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+            loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
             metrics=["accuracy"],
         )
 
@@ -76,8 +100,8 @@ def train_convnet_subsample(label_noise_as_int, n_sample_list, width):
 
         print(f"STARTING TRAINING: {model_id}, Sample Size: {sample_size}")
         history = conv_net.fit(
-            x=tf.gather(x_train, idx),
-            y=tf.gather(y_train, idx),
+            x=tf.gather(x_train, idx) if sample_size < x_train.shape[0] else x_train,
+            y=tf.gather(y_train, idx) if sample_size < x_train.shape[0] else y_train,
             validation_data=(x_test, y_test),
             epochs=n_epochs,
             batch_size=batch_size,
@@ -106,10 +130,11 @@ if __name__ == "__main__":
     # parse optional command line arguments.
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--widths', nargs='+', type=int, default=None)      # adjust the widths used in the experiment
+    parser.add_argument('--sample_sizes', nargs='+', type=int, default=None)      # adjust the widths used in the experiment
     parser.add_argument('--noise', type=int, default=10)                    # adjust the label noise used
     args = parser.parse_args()
 
-    subsample_sizes = [5_000, 10_000, 20_000, 30_000, 40_000, 50_000]
+    subsample_sizes = [5_000, 10_000, 20_000, 30_000, 40_000, 50_000] if args.widths is None else args.sample_sizes
     model_widths = [6, 30, 128] if args.widths is None else args.widths
 
     for width in model_widths:

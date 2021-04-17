@@ -90,7 +90,7 @@ def train_conv_nets(
             optimizer=tf.keras.optimizers.SGD(learning_rate=inverse_squareroot_lr())
             if optimizer is None
             else optimizer,
-            loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+            loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
             metrics=["accuracy"],
         )
 
@@ -279,8 +279,6 @@ def load_data(data_set, label_noise, augment_data=False):
         tf.cast(x_test, tf.float32) / 255,
     )
     y_train, y_test = tf.cast(y_train, tf.float32), tf.cast(y_test, tf.float32)
-
-    # TODO: Add data augmentation.
 
     return (x_train, y_train), (x_test, y_test), list(image_shape)
 
