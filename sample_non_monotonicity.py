@@ -55,7 +55,7 @@ def train_convnet_subsample(label_noise_as_int, n_sample_list, width, load_saved
     metrics = {}
 
     # Path to save results from training with different sample sizes
-    data_save_path = f"subsample_results/width_{width}.pkl"
+    data_save_path = f"subsample_results/width_{width}_{label_noise_as_int}pct_noise.pkl"
     
      # load data from prior runs of related experiment.
     if load_saved_metrics:
@@ -67,7 +67,6 @@ def train_convnet_subsample(label_noise_as_int, n_sample_list, width, load_saved
             raise e
 
         loaded_sample_sizes = [int(i.split('_')[-1]) for i in metrics.keys()]
-        assert n_sample_list[:len(loaded_sample_sizes)] == loaded_sample_sizes
         print('loaded results for width %s from existing file at %s' %(', '.join([str(i) for i in loaded_sample_sizes]), data_save_path))
 
         assert data_save_path[-4:] == ".pkl"
@@ -130,12 +129,15 @@ if __name__ == "__main__":
     # parse optional command line arguments.
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--widths', nargs='+', type=int, default=None)      # adjust the widths used in the experiment
-    parser.add_argument('--sample_sizes', nargs='+', type=int, default=None)      # adjust the widths used in the experiment
-    parser.add_argument('--noise', type=int, default=10)                    # adjust the label noise used
+    parser.add_argument('--sample_sizes', nargs='+', type=int, default=None)# adjust the widths used in the experiment
+    parser.add_argument('--noise', type=int, default=20)                    # adjust the label noise used
+    parser.add_argument('--load', type=int, default=1)                     # load data from prior trial.
     args = parser.parse_args()
+    
+    print(bool(args.load),args.load)
 
-    subsample_sizes = [5_000, 10_000, 20_000, 30_000, 40_000, 50_000] if args.widths is None else args.sample_sizes
+    subsample_sizes = [5_000, 10_000, 20_000, 30_000, 40_000, 50_000] if args.sample_sizes is None else args.sample_sizes
     model_widths = [6, 30, 128] if args.widths is None else args.widths
 
     for width in model_widths:
-        train_convnet_subsample(args.noise, subsample_sizes, width)
+        train_convnet_subsample(args.noise, subsample_sizes, width, load_saved_metrics=bool(args.load))
