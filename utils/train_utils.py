@@ -1,5 +1,4 @@
 import tensorflow as tf
-import tensorflow_datasets as tfds
 
 from tensorflow.image import random_crop, resize_with_crop_or_pad
 from tensorflow.keras.losses import SparseCategoricalCrossentropy
@@ -18,12 +17,12 @@ def train_conv_nets(
     convnet_depth,
     convnet_widths,
     label_noise_as_int=10,
-    scaled_loss_alpha=None,
     n_batch_steps=500_000,
     optimizer=None,
     save=True,
     data_save_path_prefix="",
-    data_save_path_suffix=""
+    data_save_path_suffix="",
+    load_saved_metrics=False
 ):
     """
     Train and save the results of Conv nets of a given range of model widths.
@@ -48,6 +47,10 @@ def train_conv_nets(
         prefix to add to the save pkl file path.
     data_save_path_suffix: str
         suffix to add to the save pkl file name.
+    load_saved_metrics: bool
+        if True, will attempt to load the metrics from a previous training session in the save_path,
+        to continue training from there. If True, will load the saved .pkl file instead of starting
+        over and overwriting it. 
     """
 
     label_noise = label_noise_as_int / 100
@@ -83,6 +86,10 @@ def train_conv_nets(
         data_save_path = data_save_path[:-4] + data_save_path_suffix + ".pkl"
 
     for width in convnet_widths:
+        if load_saved_metrics and width in loaded_widths:
+            print('width %d results already loaded from .pkl file, training skipped' %width)
+            continue
+
         # Depth 5 Conv Net using default Kaiming Uniform Initialization.
         conv_net, model_id = make_convNet(
             image_shape, depth=convnet_depth, init_channels=width, n_classes=n_classes
@@ -92,13 +99,13 @@ def train_conv_nets(
             optimizer=tf.keras.optimizers.SGD(learning_rate=inverse_squareroot_lr())
             if optimizer is None
             else optimizer,
-            loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+            loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
             metrics=["accuracy"],
         )
 
         model_timer = timer()
 
-        print(f"STARTING TRAINING: {model_id}, Alpha: {alpha}")
+        print(f"STARTING TRAINING: {model_id}")
         history = conv_net.fit(
             x=x_train,
             y=y_train,
@@ -133,7 +140,8 @@ def train_resnet18(
     optimizer=None,
     save=True,
     data_save_path_prefix="",
-    data_save_path_suffix=""
+    data_save_path_suffix="",
+    load_saved_metrics=False
 ):
     """
     Train and save the results of ResNets nets of a given range of model widths.
@@ -146,8 +154,6 @@ def train_resnet18(
         List of model widths to train.
     label_noise_as_int: int
         Percentage of label noise to add to the training data.
-    scaled_loss_alpha: float
-        The alplha value used to scale the cross entropy loss used during training.
     n_epochs: int
         number of epochs to train, if not specified, will calculate with n_batch_steps
     n_batch_steps: int
@@ -160,6 +166,10 @@ def train_resnet18(
         prefix to add to the save pkl file path.
     data_save_path_suffix: str
         suffix to add to the save pkl file name.
+    load_saved_metrics: bool
+        if True, will attempt to load the metrics from a previous training session in the save_path,
+        to continue training from there. If True, will load the saved .pkl file instead of starting
+        over and overwriting it. 
     """
 
     label_noise = label_noise_as_int / 100
@@ -192,8 +202,31 @@ def train_resnet18(
     if data_save_path_suffix:
         assert data_save_path[-4:] == ".pkl"
         data_save_path = data_save_path[:-4] + data_save_path_suffix + ".pkl"
+    
+    # load data from prior runs of related experiment.
+    if load_saved_metrics:
+        try:
+            with open(data_save_path, 'rb') as f:
+                metrics = pkl.load(f)
+        except Exception as e:
+            print('Could not find saved metrics.pkl file, exiting')
+            raise e
+
+        loaded_widths = [int(i.split('_')[-1]) for i in metrics.keys()]
+        assert convnet_widths[:len(loaded_widths)] == loaded_widths
+        print('loaded results for width %s from existing file at %s' %(', '.join([str(i) for i in loaded_widths]), data_save_path))
+
+        assert data_save_path[-4:] == ".pkl"
+        data_backup_path = data_save_path[:-4] + 'backup_w%d_' %loaded_widths[-1] + time.strftime("%D_%H%M%S").replace('/', '') + ".pkl"
+        print('saving existing result.pkl to backup at %s' %data_backup_path)
+        pkl.dump(metrics, open(data_backup_path, "wb"))
+
 
     for width in resnet_widths:
+        if load_saved_metrics and width in loaded_widths:
+            print('width %d results already loaded from .pkl file, training skipped' %width)
+            continue
+
         # Resnet18 with Kaiming Uniform Initialization.
         resnet, model_id = make_resnet18_UniformHe(
             image_shape, k=width, num_classes=n_classes
@@ -284,10 +317,25 @@ def load_data(data_set, label_noise, augment_data=False):
     )
     y_train, y_test = tf.cast(y_train, tf.float32), tf.cast(y_test, tf.float32)
 
-    # TODO: Add data augmentation.
-
     return (x_train, y_train), (x_test, y_test), list(image_shape)
 
+class inverse_squareroot_lr:
+    """
+    This is the learning rate used with SGD in the paper (Inverse square root decay).
+    Learning Rate starts at 0.1 and then drops every 512 batches.
+    """
+
+    def __init__(self, n_steps=512, init_lr=0.1):
+        self.n = n_steps
+        self.gradient_steps = 0
+        self.init_lr = init_lr
+
+    def __call__(self):
+        lr = self.init_lr / tf.math.sqrt(
+            1.0 + tf.math.floor(self.gradient_steps / self.n)
+        )
+        self.gradient_steps += 1
+        return lr
 
 def augment_data_set(data_set, crop_dim=32, target_height=36, target_width=36):
     """ Apply random cropping and random horizontal flip data augmentation as done in Deep Double Descent """

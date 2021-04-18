@@ -64,7 +64,7 @@ def make_convNet(
                 kernel_initializer=layer_init,
             )
         )
-        conv_net.add(BatchNormalization(momentum=0.9, epsilon=1e-5, renorm=True))
+        conv_net.add(BatchNormalization(momentum=0.9, epsilon=1e-5, renorm=True, trainable=True))
         conv_net.add(ReLU())
 
         # This delays max pooling until the final 4 layers. After 4 layers of 2x2 (stride 2x2) max pooling the image dimension goes from 32 x 32 to 4x4.
@@ -75,7 +75,7 @@ def make_convNet(
     conv_net.add(ReLU())
     conv_net.add(Flatten())
     conv_net.add(
-        Dense(units=n_classes, activation="softmax", kernel_initializer=layer_init)
+        Dense(units=n_classes, kernel_initializer=layer_init)
     )
 
     # used in identifying the model later on
