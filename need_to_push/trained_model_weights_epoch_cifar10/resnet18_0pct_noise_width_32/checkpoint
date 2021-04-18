@@ -1,0 +1,2 @@
+model_checkpoint_path: "ResNet18_width_32_epochs_36"
+all_model_checkpoint_paths: "ResNet18_width_32_epochs_36"
